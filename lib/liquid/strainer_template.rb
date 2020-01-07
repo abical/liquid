@@ -14,33 +14,41 @@ module Liquid
     end
 
     class << self
-      def add_filter(filter)
-        return if include?(filter)
+      def add_filter(mod)
+        filter_klass = Class.new do
+          include(mod)
 
-        invokable_non_public_methods = (filter.private_instance_methods + filter.protected_instance_methods).select { |m| invokable?(m) }
-        if invokable_non_public_methods.any?
-          raise MethodOverrideError, "Filter overrides registered public methods as non public: #{invokable_non_public_methods.join(', ')}"
+          def initialize(context)
+            @context = context
+          end
         end
 
-        include(filter)
-
-        filter_methods.merge(filter.public_instance_methods.map(&:to_s))
+        methods = mod.public_instance_methods
+        methods.each do |method|
+          filter_class_by_methods[method.to_s] = filter_klass
+        end
       end
 
       def invokable?(method)
-        filter_methods.include?(method.to_s)
+        filter_class_by_methods.key?(method.to_s)
+      end
+
+      def filter_class_for_methods(method)
+        filter_class_by_methods[method.to_s]
       end
 
       private
 
-      def filter_methods
-        @filter_methods ||= Set.new
+      def filter_class_by_methods
+        @filter_class_by_methods ||= {}
       end
     end
 
     def invoke(method, *args)
       if self.class.invokable?(method)
-        send(method, *args)
+        klass = self.class.filter_class_for_methods(method)
+        instance = klass.new(@context)
+        instance.public_send(method, *args)
       elsif @context&.strict_filters
         raise Liquid::UndefinedFilter, "undefined filter #{method}"
       else
